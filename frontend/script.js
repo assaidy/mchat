@@ -1,43 +1,58 @@
 const msgBox = document.getElementById("messages");
 const msgInput = document.getElementById("msg");
-const socket = new WebSocket("ws://localhost:8080");
+const socket = new WebSocket("ws://localhost:3000/ws");
 
 function insertMsg(msg) {
     const newMsg = document.createElement("p");
-    newMsg.innerHTML = msg;
+    newMsg.innerHTML = `<span>${msg.sender}</span> ${msg.text}`;
     msgBox.appendChild(newMsg);
-
-    // Scroll to the bottom
-    msgBox.scrollTop = msgBox.scrollHeight;
 }
 
 (() => {
-    // TODO: login /login {username} {token}
-    // 1. send the username from the user
-    // 2. check if username is already taken by sending a request to the server: POST /login
+    // TODO: enter in the input filed: /token {token}
+    // 1. check token
     // 3. check if the token is correct
     // 4. if login succeeded, store username localy
 
-    socket.addEventListener("open", (event) => {
+    let name = "";
+
+    socket.onopen = (event) => {
         // get message history (array of messages)
         // loop on them and insertMst(msg)
+
         console.log(event.data);
-    });
-    socket.addEventListener("message", (event) => {
-        // insertMsg(msg)
+
+    };
+    socket.onmessage = (event) => {
         console.log(event.data);
-    });
-    socket.addEventListener("error", (error) => {
+        insertMsg(JSON.parse(event.data));
+    };
+    socket.onerror = (error) => {
         console.error("websocket error: ", error);
-    });
+    };
 
     msgInput.addEventListener("keydown", (event) => {
-        if (msgInput.value.trim() !== "" && event.key == "Enter") {
-            const msg = {
-                text: msgInput.value.trim(),
-            };
-            socket.send(JSON.stringify(msg))
-            msgInput.value = "";
+        let input = msgInput.value.trim();
+        if (input !== "" && event.key == "Enter") {
+            if (name == "") {
+                if (input.startsWith("/name ")) {
+                    name = input.replace("/name ", "");
+                    socket.send(JSON.stringify({ name: name }))
+                    msgInput.value = "";
+                } else {
+                    msgInput.value = "please enter your name like: /name {your name}";
+                    setTimeout(() => {
+                        msgInput.value = "";
+                    }, 2000);
+                }
+            }
+            else {
+                const msg = {
+                    text: input,
+                };
+                socket.send(JSON.stringify(msg))
+                msgInput.value = "";
+            }
         }
     })
 })();
