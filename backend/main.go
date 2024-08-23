@@ -1,7 +1,10 @@
 package main
 
+// TODO: implement token authentication
+
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -9,62 +12,50 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-// TODO: use message types like ClientName, TextMessage, TokenVerification
-
 const Port = ":3000"
 
 type Server struct {
-	Clients map[*websocket.Conn]struct{}
+	Clients  map[*websocket.Conn]struct{}
+	Messages []Message
+	MsgCh    chan Message
 }
 
-type MessageResponse struct {
-	Sender string `json:"sender"`
-	Text   string `json:"text"`
-}
 type MessageRequest struct {
 	Text string `json:"text"`
 }
 
 func NewServer() *Server {
-	return &Server{
-		Clients: make(map[*websocket.Conn]struct{}),
+	server := &Server{
+		Clients:  make(map[*websocket.Conn]struct{}),
+		Messages: make([]Message, 0),
+		MsgCh:    make(chan Message),
 	}
+	go server.broadcast()
+
+	return server
 }
 
 func (s *Server) handleWS(ws *websocket.Conn) {
 	log.Printf("new connection from client: %s", ws.RemoteAddr())
 	s.Clients[ws] = struct{}{}
+	// sync messages history
+	for _, msg := range s.Messages {
+		if err := websocket.JSON.Send(ws, msg.Response()); err != nil {
+			log.Printf("error sending msg (%s): %v", ws.RemoteAddr(), err)
+		}
+	}
 	s.readLoop(ws)
 }
 
-func getClientName(ws *websocket.Conn) string {
-	buf := make([]byte, 1024)
-	n, err := ws.Read(buf)
-	if err != nil {
-		log.Printf("error reading client name (%s): %v", ws.RemoteAddr(), err)
-		return "UNKNOWN"
-	}
-
-	msg := struct {
-		Name string `json:"name"`
-	}{}
-
-	err = json.Unmarshal(buf[:n], &msg)
-	if err != nil {
-		log.Printf("error unmarshal client name (%s): %v", ws.RemoteAddr(), err)
-		return "UNKNOWN"
-	}
-
-	return msg.Name
-}
-
 func (s *Server) readLoop(ws *websocket.Conn) {
+	name := getClientName(ws)
+	s.MsgCh <- &MessageJoinChat{Name: name}
+
 	defer func() {
 		ws.Close()
 		log.Printf("connection closed with client: %s", ws.RemoteAddr())
+		s.MsgCh <- &MessageLeaveChat{Name: name}
 	}()
-
-	name := getClientName(ws)
 
 	for {
 		buf := make([]byte, 1024)
@@ -87,20 +78,59 @@ func (s *Server) readLoop(ws *websocket.Conn) {
 
 		log.Printf("new message (%s): %v", ws.RemoteAddr(), msg.Text)
 
-		s.broadcast(&MessageResponse{
-			Text:   msg.Text,
-			Sender: name,
-		})
+		s.MsgCh <- &MessageChat{Name: name, Text: msg.Text}
 	}
 }
 
-func (s *Server) broadcast(msg *MessageResponse) {
-	for ws := range s.Clients {
-		go func(ws *websocket.Conn) {
-			if err := websocket.JSON.Send(ws, msg); err != nil {
-				log.Printf("error sending msg (%s): %v", ws.RemoteAddr(), err)
-			}
-		}(ws)
+func (s *Server) broadcast() {
+	for msg := range s.MsgCh {
+		s.Messages = append(s.Messages, msg)
+		for ws := range s.Clients {
+			go func(ws *websocket.Conn) {
+				if err := websocket.JSON.Send(ws, msg.Response()); err != nil {
+					log.Printf("error sending msg (%s): %v", ws.RemoteAddr(), err)
+				}
+			}(ws)
+		}
+	}
+}
+
+type Message interface {
+	Response() map[string]string
+}
+
+type MessageJoinChat struct {
+	Name string
+}
+
+func (m *MessageJoinChat) Response() map[string]string {
+	return map[string]string{
+		"type": "join",
+		"text": fmt.Sprintf("%s joined chat", m.Name),
+	}
+}
+
+type MessageLeaveChat struct {
+	Name string
+}
+
+func (m *MessageLeaveChat) Response() map[string]string {
+	return map[string]string{
+		"type": "leave",
+		"text": fmt.Sprintf("%s left chat", m.Name),
+	}
+}
+
+type MessageChat struct {
+	Name string
+	Text string
+}
+
+func (m *MessageChat) Response() map[string]string {
+	return map[string]string{
+		"type":   "chat",
+		"sender": m.Name,
+		"text":   m.Text,
 	}
 }
 
@@ -110,4 +140,25 @@ func main() {
 
 	log.Printf("starting server on port %v", Port)
 	http.ListenAndServe(Port, nil)
+}
+
+func getClientName(ws *websocket.Conn) string {
+	buf := make([]byte, 1024)
+	n, err := ws.Read(buf)
+	if err != nil {
+		log.Printf("error reading client name (%s): %v", ws.RemoteAddr(), err)
+		return "UNKNOWN"
+	}
+
+	msg := struct {
+		Name string `json:"name"`
+	}{}
+
+	err = json.Unmarshal(buf[:n], &msg)
+	if err != nil {
+		log.Printf("error unmarshal client name (%s): %v", ws.RemoteAddr(), err)
+		return "UNKNOWN"
+	}
+
+	return msg.Name
 }

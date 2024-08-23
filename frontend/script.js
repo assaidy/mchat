@@ -4,24 +4,21 @@ const socket = new WebSocket("ws://localhost:3000/ws");
 
 function insertMsg(msg) {
     const newMsg = document.createElement("p");
-    newMsg.innerHTML = `<span>${msg.sender}</span> ${msg.text}`;
+    if (msg.type === "chat") {
+        newMsg.innerHTML = `<span>${msg.sender}</span> ${msg.text}`;
+    } else {
+        newMsg.innerHTML = `${msg.text}`;
+    }
     msgBox.appendChild(newMsg);
 }
 
 (() => {
-    // TODO: enter in the input filed: /token {token}
-    // 1. check token
-    // 3. check if the token is correct
-    // 4. if login succeeded, store username localy
+    // TODO: always display user Name to the user to distinguish them while testing
 
     let name = "";
 
     socket.onopen = (event) => {
-        // get message history (array of messages)
-        // loop on them and insertMst(msg)
-
         console.log(event.data);
-
     };
     socket.onmessage = (event) => {
         console.log(event.data);
@@ -33,17 +30,12 @@ function insertMsg(msg) {
 
     msgInput.addEventListener("keydown", (event) => {
         let input = msgInput.value.trim();
-        if (input !== "" && event.key == "Enter") {
-            if (name == "") {
+        if (input !== "" && event.key === "Enter") {
+            if (name === "") {
                 if (input.startsWith("/name ")) {
                     name = input.replace("/name ", "");
                     socket.send(JSON.stringify({ name: name }))
-                    msgInput.value = "";
-                } else {
-                    msgInput.value = "please enter your name like: /name {your name}";
-                    setTimeout(() => {
-                        msgInput.value = "";
-                    }, 2000);
+                    msgInput.placeholder = "enter a message";
                 }
             }
             else {
@@ -51,8 +43,8 @@ function insertMsg(msg) {
                     text: input,
                 };
                 socket.send(JSON.stringify(msg))
-                msgInput.value = "";
             }
+            msgInput.value = "";
         }
     })
 })();
